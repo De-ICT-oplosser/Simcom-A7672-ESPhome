@@ -129,7 +129,7 @@ void A7672Component::parse_cmd_(std::string message) { // Renamed class
       }
     }
     case STATE_CHECK_SMS:
-      send_cmd_("AT+CMGL=\"ALL\""); // Verify A7672 list SMS command
+      // send_cmd_("AT+CMGL=\"ALL\""); // Verify A7672 list SMS command
       this->state_ = STATE_PARSE_SMS_RESPONSE;
       this->parse_index_ = 0;
       break;
