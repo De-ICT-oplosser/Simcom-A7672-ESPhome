@@ -352,21 +352,37 @@ void A7672Component::parse_cmd_(std::string message) { // Renamed class
         this->write(26); // Send CTRL+Z just in case
       }
       break;
-    case STATE_SENDING_SMS_3:
-      // Verify A7672 SMS sent confirmation format (+CMGS:)
-      if (message.compare(0, 6, "+CMGS:") == 0) {
-        ESP_LOGD(TAG, "SMS Sent OK: %s", message.c_str());
-        this->send_pending_ = false;
-        this->state_ = STATE_CHECK_SMS; // Or STATE_INIT
-        this->expect_ack_ = true; // Expect final OK for +CMGS
-      } else if (message == "OK") {
-        // Ignore OK here, wait for +CMGS
-      } else {
-         ESP_LOGE(TAG, "SMS Send Failed or unexpected response: %s", message.c_str());
-         this->send_pending_ = false;
-         this->state_ = STATE_INIT;
-         // Assume failure, maybe report error
-      }
+      case STATE_SENDING_SMS_3:
+      // We have sent the SMS body and CTRL+Z. Now we expect +CMGS: <mr>
+      // The modem will also send an OK after +CMGS: <mr>
+      
+      { // Added braces for local variable scope
+        std::string trimmed_message = message;
+        // Trim leading/trailing whitespace from the message
+        trimmed_message.erase(0, trimmed_message.find_first_not_of(" \t\r\n"));
+        trimmed_message.erase(trimmed_message.find_last_not_of(" \t\r\n") + 1);
+
+        if (trimmed_message.empty()) { // If the line was only whitespace (like the stray space)
+          ESP_LOGV(TAG, "Ignored empty/whitespace line in STATE_SENDING_SMS_3, waiting for actual response.");
+          // Stay in STATE_SENDING_SMS_3 to process the next line
+        } else if (trimmed_message.compare(0, 6, "+CMGS:") == 0) {
+          ESP_LOGD(TAG, "SMS Sent Confirmed (+CMGS): %s", trimmed_message.c_str());
+          this->send_pending_ = false; // Mark SMS as sent
+          // After +CMGS, the modem will send an OK.
+          this->state_ = STATE_INIT;   // Transition to STATE_INIT (or STATE_CHECK_SMS).
+                                       // The expect_ack_ logic will handle the upcoming OK.
+          this->expect_ack_ = true;    // Set to expect the final "OK" that confirms the +CMGS sequence.
+        } else if (trimmed_message.find("ERROR") != std::string::npos) {
+          ESP_LOGE(TAG, "SMS Send Failed with explicit ERROR: %s", trimmed_message.c_str());
+          this->send_pending_ = false;
+          this->state_ = STATE_INIT;
+        } else {
+          // Some other unexpected non-empty line. Log it but stay in this state.
+          ESP_LOGW(TAG, "Unexpected non-empty line in STATE_SENDING_SMS_3: '%s'. Waiting for +CMGS or ERROR.", trimmed_message.c_str());
+          // Stay in STATE_SENDING_SMS_3 to process the next incoming line from the modem.
+          // The watchdog (watch_dog_++) will eventually reset if the modem gets truly stuck.
+        }
+      } // End of local variable scope
       break;
     case STATE_DIALING1:
       this->send_cmd_("ATD" + this->recipient_ + ';'); // Dial command, likely same (';' for voice)
